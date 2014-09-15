@@ -5,6 +5,7 @@ no warnings 'experimental';
 use autodie;
 use IO::File;
 use Data::Printer;
+use Try::Tiny;
 $|=1;
 
 my $tlc_fn = shift;
@@ -36,6 +37,7 @@ sub read_generic {
     my $constructor_id = unpack 'L<', <$fh>;
     printf "Constructor id: 0x%08x\n", $constructor_id;
     if ($constructor_id == 0x3a2f9be2) {
+        # tls.schema_v2#3a2f9be2 version:int date:int types_num:# types:types_num*[ tls.Type ] constructor_num:# constructors:constructor_num*[ tls.Combinator ] functions_num:# functions:functions_num*[ tls.Combinator ] = tls.Schema
         my $schema = {};
 
         # version:int
@@ -55,7 +57,13 @@ sub read_generic {
         $schema->{types} = \@types;
         for (0..$types_num-1) {
             #push @types, read_type($fh);
-            my $type = read_generic($fh);
+            my $type;
+            try {
+                $type = read_generic($fh);
+            } catch {
+                p $schema;
+                die "Error reading type";
+            };
             push @types, $type;
             $schema->{_types_by_id}{$type->{id}} = $type;
             $schema->{_types_by_name}{$type->{name}} = $type;
@@ -69,7 +77,13 @@ sub read_generic {
         my @constructors;
         $schema->{constructors} = \@constructors;
         for (0..$constructor_num-1) {
-            my $constructor = read_generic($fh);
+            my $constructor;
+            try {
+                $constructor = read_generic($fh);
+            } catch {
+                p $schema;
+                die "Error reading constructor: ".shift;
+            };
             push @constructors, $constructor;
             $schema->{_constructors_by_id}{$constructor->{id}} = $constructor;
             $schema->{_constructors_by_name}{$constructor->{name}} = $constructor;
@@ -88,40 +102,52 @@ sub read_generic {
         return $schema;
 
     } elsif ($constructor_id == 0x12eb4386) {
+        # tls.type#12eb4386 name:int id:string constructors_num:int flags:int arity:int params_type:long = tls.Type
+        
         print "read_type\n";
         return read_type($fh);
     } elsif ($constructor_id == 0x5c0a1ed5) {
+        # tls.combinator#5c0a1ed5 name:int id:string type_name:int left:tls.CombinatorLeft right:tls.CombinatorRight = tls.Combinator
         # tl-tl.h: TLS_COMBINATOR
         print "read_combinator\n";
         return read_combinator($fh);
     } elsif ($constructor_id == 0x4c12c6d9) {
+        # tls.combinatorLeft#4c12c6d9 args_num:# args:args_num*[ tls.Arg ] = tls.CombinatorLeft
         # tl-tl.h: TLS_COMBINATOR_LEFT
         print "read_combinator_left\n";
         return read_combinator_left($fh);
     } elsif ($constructor_id == 0x29dfe61b) {
+        # tls.arg#29dfe61b id:string flags:# var_num:flags.1?int exist_var_num:flags.2?int exist_var_bit:flags.2?int type:tls.TypeExpr = tls.Arg
         # tl-tl.h TLS_ARG_V2
         print "read_arg_v2\n";
         return read_arg_v2($fh);
     } elsif ($constructor_id == 0xc1863d08) {
+        # tls.typeExpr#c1863d08 name:int flags:int children_num:# children:children_num*[ tls.Expr ] = tls.TypeExpr
         # tl-tl.h TLS_TYPE_EXPR
         print "read_type_expr\n";
         return read_type_expr($fh);
     } elsif ($constructor_id == 0x2c064372) {
+        # tls.combinatorRight#2c064372 value:tls.TypeExpr = tls.CombinatorRight
         # ../tg/tl-tl.h:#define TLS_COMBINATOR_RIGHT_V2 0x2c064372
         #tls.combinatorRight value:tls.TypeExpr = tls.CombinatorRight;
         return read_generic($fh);
     } elsif ($constructor_id == 0xecc9da78) {
         # tl-tl.h TLS_EXPR_TYPE 
+        # tls.exprType#ecc9da78 _:tls.TypeExpr = tls.Expr
         return read_expr_type($fh);
     } elsif ($constructor_id == 0xcd211f63) {
+        # tls.combinatorLeftBuiltin#cd211f63 = tls.CombinatorLeft
         return read_combinator_left_builtin($fh);
     } elsif ($constructor_id == 0x2cecf817) {
+        # ???
         return read_type_var($fh);
     } elsif ($constructor_id == 0x70659eff) {
+        # ???
         # ../tg/generate.h -- 50:#define NAME_VAR_NUM 0x70659eff
         # ../tg/tl-parser.c -- 2646:  if (!strcmp (t->id, "#")) { t->name = 0x70659eff; return; }
         return read_nat_var($fh);
     } elsif ($constructor_id == 0xd9fb20de) {
+        # tls.array#d9fb20de multiplicity:tls.NatExpr args_num:# args:args_num*[ tls.Arg ] = tls.TypeExpr
         # ../tg/tl-tl.h -- 50:#define TLS_ARRAY 0xd9fb20de
         print "read_possibly_array\n";
         # tls.array multiplicity:tls.NatExpr args_num:# args:args_num*[tls.Arg] = tls.TypeExpr;
@@ -133,12 +159,20 @@ sub read_generic {
         return $a;
 
     } elsif ($constructor_id == 0x4e8a14f0) {
+        # tls.natVar#4e8a14f0 dif:int var_num:int = tls.NatExpr
         # ../tg/tl-tl.h -- 48:#define TLS_NAT_VAR 0x4e8a14f0
         return read_nat_var($fh);
 
     } elsif ($constructor_id == 0x0142ceae) {
+        # tls.typeVar#0142ceae var_num:int flags:int = tls.TypeExpr
         # ../tg/tl-tl.h -- 49:#define TLS_TYPE_VAR 0x0142ceae
         return read_type_var($fh);
+
+    } elsif ($constructor_id == 0xdcb49bd8) {
+        # tl.norm.tl:tls.exprNat#dcb49bd8 _:tls.NatExpr = tls.Expr
+        my $x = {};
+        $x->{_} = read_generic($fh);
+        return $x;
         
     } else {
         die sprintf "Don't know what to do with constructor id 0x%08x", $constructor_id;
@@ -199,18 +233,26 @@ sub read_arg_v2 {
     my ($fh) = @_;
     #tls.arg id:string flags:# var_num:flags.1?int exist_var_num:flags.2?int exist_var_bit:flags.2?int type:tls.TypeExpr = tls.Arg;
     my $arg = {};
+    say "READING arg:";
     $arg->{id} = read_string($fh);
+    say "id: $arg->{id}";
     $arg->{flags} = read_seq($fh);
+    say "flags: $arg->{flags}";
     if ($arg->{flags} & (1<<1)) {
         $arg->{var_num} = read_int($fh);
+        say "var_num: $arg->{var_num}";
     }
     if ($arg->{flags} & (1<<2)) {
         $arg->{exist_var_num} = read_int($fh);
+        say "var_num: $arg->{exist_var_num}";
     }
     if ($arg->{flags} & (1<<2)) {
         $arg->{exist_var_bit} = read_int($fh);
+        say "var_num: $arg->{exist_var_bit}";
     }
     $arg->{type} = read_generic($fh);
+    say "type: $arg->{type}";
+    say "DONE READING arg";
 
     #p $arg;
     return $arg;
@@ -232,9 +274,9 @@ sub read_combinator {
     # tls.combinator name:int id:string type_name:int left:tls.CombinatorLeft right:tls.CombinatorRight = tls.Combinator;
     my $comb = {
     };
-    $comb->{name} = read_int($fh);
+    $comb->{name} = read_seq($fh);
     $comb->{id}   = read_string($fh);
-    $comb->{type_name} = read_int($fh);
+    $comb->{type_name} = read_seq($fh);
     $comb->{left} = read_generic($fh);
     $comb->{right} = read_generic($fh);
     #p $comb;
@@ -284,7 +326,7 @@ sub read_string {
 sub read_type {
     my ($fh) = @_;
     my $type = {};
-    $type->{name} = read_int($fh);
+    $type->{name} = read_seq($fh);
     printf "Name: 0x%08x\n", $type->{name};
     $type->{id} = read_string($fh);
     $type->{constructors_num} = read_int($fh);
